@@ -13,7 +13,4 @@ Imports:
     dplyr,
     lubridate,
     magrittr,
-    MMWRweek,
-    purrr,
-    stringr,
-    tidyr
+    MMWRweek
