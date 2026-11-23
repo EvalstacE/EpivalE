@@ -12,7 +12,7 @@ Imports:
     lubridate,
     tibble,
     rlang,
-    httr2
+    magrittr
 Suggests:
     MMWRweek,
     arcgislayers,
