@@ -67,7 +67,8 @@ wx_get_daily <- function(
       httr2::req_timeout(timeout_sec) %>%
       httr2::req_retry(max_tries = 3L, retry_on_failure = TRUE) %>%
       httr2::req_perform() %>%
-      httr2::resp_body_json(simplifyVector = FALSE)
+      httr2::resp_body_string() %>%
+      jsonlite::fromJSON(simplifyVector = FALSE)
   }, error = function(e) {
     warning("Failed to fetch Open-Meteo weather data: ", conditionMessage(e), call. = FALSE)
     NULL
