@@ -1,3 +1,52 @@
+# Internal helper: EPA 1-decimal truncation (1e-9 prevents float drift like 35.5*10 = 354.999999)
+trunc_1dp <- function(x) {
+  floor((x + 1e-9) * 10) / 10
+}
+
+
+#' Classify PM2.5 Concentrations Using 2024 EPA AQI Breakpoints
+#'
+#' @description Truncates PM2.5 concentrations (µg/m³) to one decimal place per
+#'   EPA rules and assigns the revised 2024 AQI health category.
+#'
+#' @param pm25 Numeric vector of PM2.5 concentrations (µg/m³).
+#' @param short_usg Logical. If `TRUE` (default), labels 35.5–55.4 µg/m³ as
+#'   `"USG"` for compact UI displays; if `FALSE`, uses
+#'   `"Unhealthy for Sensitive Groups"`.
+#' @param clamp_negative Logical. If `TRUE` (default), treats small negative
+#'   monitor noise (`< 0`) as `0` (`"Good"`); if `FALSE`, returns `NA`.
+#'
+#' @return An ordered factor of EPA PM2.5 health categories.
+#' @export
+aq_pm25_category <- function(pm25, short_usg = TRUE, clamp_negative = TRUE) {
+  usg_label <- if (isTRUE(short_usg)) "USG" else "Unhealthy for Sensitive Groups"
+  lvls <- c("Good", "Moderate", usg_label, "Unhealthy", "Very Unhealthy", "Hazardous")
+  
+  x <- as.numeric(pm25)
+  if (isTRUE(clamp_negative)) {
+    x <- ifelse(!is.na(x) & x < 0, 0, x)
+  } else {
+    x <- ifelse(!is.na(x) & x < 0, NA_real_, x)
+  }
+  
+  # Truncate to 1 decimal place (1e-9 guards against floating-point drift)
+  v <- trunc_1dp(x)
+  
+  cat_chr <- dplyr::case_when(
+    is.na(v)   ~ NA_character_,
+    v <= 9.0   ~ "Good",
+    v <= 35.4  ~ "Moderate",
+    v <= 55.4  ~ usg_label,
+    v <= 125.4 ~ "Unhealthy",
+    v <= 225.4 ~ "Very Unhealthy",
+    TRUE       ~ "Hazardous"
+  )
+  
+  factor(cat_chr, levels = lvls, ordered = TRUE)
+}
+
+
+
 #' Standard Montana DEQ PM2.5 field sets
 #'
 #' @param set Either `"minimal"` (fastest for daily summaries) or `"full"`
@@ -347,7 +396,8 @@ aq_get_deq_pm25 <- function(
     dplyr::mutate(
       raw_clean = dplyr::if_else(.data$qa_subbed, .data$reg1, .data$raw_clean),
       pm25      = round(.data$raw_clean),
-      parameter = dplyr::if_else(.data$qa_subbed, "PM25", .data$parameter)
+      parameter = dplyr::if_else(.data$qa_subbed, "PM25", .data$parameter),
+      pm25_cat  = aq_pm25_category(.data$raw_clean)
     ) %>%
     dplyr::select(-dplyr::all_of(c("prev_val", "next_val", "neighbor_ref")))
   
@@ -373,7 +423,8 @@ aq_get_deq_pm25 <- function(
   daily_cols <- c(
     "date_clean", "date_txt", "year_txt",
     "avg_9AM4hr", "avg_9AM8hr", "avg_4PM4hr", "avg_4PM8hr",
-    "avg_24hr", "max_24hr", "n_valid",
+    "avg_24hr", "max_24hr", "pm25_cat_24hr", "exceeds_naaqs_24hr",
+    "n_valid",
     "qa_flag", "qa_flagged_hrs", "qa_subbed_hrs", "qa_details",
     "completeness_flag", "completeness_note",
     "instrument_hrs_REG", "instrument_hrs_REG2",
@@ -401,8 +452,8 @@ aq_get_deq_pm25 <- function(
       n_4pm_4 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 4L),
       n_4pm_8 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 8L),
       
-      avg_24hr = if (.data$day_complete && .data$n_valid >= 18L) round(mean(.data$raw_clean, na.rm = TRUE), 2) else NA_real_,
-      max_24hr = if (.data$day_complete && .data$n_valid >= 18L) round(max(.data$raw_clean, na.rm = TRUE), 2)  else NA_real_,
+      avg_24hr = if (.data$day_complete && .data$n_valid >= 18L) trunc_1dp(mean(.data$raw_clean, na.rm = TRUE)) else NA_real_,
+      max_24hr = if (.data$day_complete && .data$n_valid >= 18L) trunc_1dp(max(.data$raw_clean, na.rm = TRUE))  else NA_real_,
       
       qa_flagged_hrs = sum(.data$qa_flag, na.rm = TRUE),
       qa_subbed_hrs  = sum(.data$qa_subbed, na.rm = TRUE),
@@ -438,9 +489,15 @@ aq_get_deq_pm25 <- function(
       .groups = "drop"
     ) %>%
     dplyr::mutate(
-      date_clean = .data$day_mt,
-      date_txt   = sub(" 0", " ", format(.data$day_mt, "%b %d")),
-      year_txt   = format(.data$day_mt, "%Y"),
+      date_clean         = .data$day_mt,
+      date_txt           = sub(" 0", " ", format(.data$day_mt, "%b %d")),
+      year_txt           = format(.data$day_mt, "%Y"),
+      pm25_cat_24hr      = aq_pm25_category(.data$avg_24hr),
+      exceeds_naaqs_24hr = dplyr::if_else(
+        is.na(.data$avg_24hr),
+        NA,
+        .data$avg_24hr >= 35.5
+      ),
       qa_status  = dplyr::case_when(
         dplyr::coalesce(.data$qa_flag, FALSE) & dplyr::coalesce(.data$qa_subbed_hrs, 0L) > 0L ~ "Substituted",
         dplyr::coalesce(.data$qa_flag, FALSE)                                                 ~ "Flagged",
