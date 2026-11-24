@@ -38,12 +38,11 @@ deq_pm25_where <- function(logger_id = "RP") {
 }
 
 
-
 #' Pull and Summarize MT DEQ Hourly PM2.5
 #'
 #' @description Reads in MT DEQ's hourly air quality API hosted via ArcGIS Online
 #'   and calculates daily summaries pertinent to regulatory season (4-hr, 8-hr,
-#'   and 24-hr averages plus QA/QC and completeness flags).
+#'   and 24-hr averages plus QA/QC status, notes, and completeness flags).
 #'   NOTE: The API service only maintains hourly records from a rolling 13-month window.
 #'
 #' @param start_date Start date of query range (coercible via `lubridate::as_date()`).
@@ -89,7 +88,7 @@ aq_get_deq_pm25 <- function(
   start_d <- lubridate::as_date(start_date)
   end_d   <- lubridate::as_date(end_date)
   
-# Fail-fast input checks
+  # Fail-fast input checks
   if (is.na(start_d) || is.na(end_d) || start_d > end_d) {
     stop("`start_date` and `end_date` must be valid dates with start_date <= end_date.", call. = FALSE)
   }
@@ -114,10 +113,9 @@ aq_get_deq_pm25 <- function(
     stop("`where_base` must be a single, non-empty SQL WHERE clause string.", call. = FALSE)
   }
   
-#----------------------------------------------------------------------------#  
-#----------------------------------------------------------------------------#
-# Internal helpers
-#----------------------------------------------------------------------------#
+  #----------------------------------------------------------------------------#
+  # Internal helpers
+  #----------------------------------------------------------------------------#
   first_valid <- function(x) {
     v <- x[!is.na(x)]
     if (length(v) == 0L) NA_real_ else v[1]
@@ -182,11 +180,9 @@ aq_get_deq_pm25 <- function(
     if (length(notes) == 0L) NA_character_ else paste(notes, collapse = "; ")
   }
   
-#----------------------------------------------------------------------------#
-#----------------------------------------------------------------------------#  
-#----------------------------------------------------------------------------#
-# Open DEQ FeatureServer layer (supports NULL, URL string, or FeatureLayer)
-#----------------------------------------------------------------------------#
+  #----------------------------------------------------------------------------#
+  # Open DEQ FeatureServer layer (supports NULL, URL string, or FeatureLayer)
+  #----------------------------------------------------------------------------#
   default_url <- "https://gis.mtdeq.us/mapping/rest/services/Montana_Air_Quality_Monitoring_Stations/FeatureServer/0"
   
   if (is.null(deq_lyr)) {
@@ -195,16 +191,16 @@ aq_get_deq_pm25 <- function(
     deq_lyr <- arcgislayers::arc_open(deq_lyr, token = NULL)
   }
   
-#----------------------------------------------------------------------------#
-# Fetch chunks
-#----------------------------------------------------------------------------#
+  #----------------------------------------------------------------------------#
+  # Fetch chunks (08:00:00 UTC upper bound covers MT evening hours past 5 PM)
+  #----------------------------------------------------------------------------#
   chunk_starts <- seq(start_d, end_d, by = paste(chunk_days, "days"))
   chunk_ends   <- pmin(chunk_starts + lubridate::days(chunk_days), end_d + lubridate::days(1))
   n_chunks     <- length(chunk_starts)
   
   fetch_chunk <- function(c_start, c_end, max_tries = 3L) {
     chunk_where <- sprintf(
-      "(%s) AND date >= TIMESTAMP '%s 00:00:00' AND date < TIMESTAMP '%s 00:00:00'",
+      "(%s) AND date >= TIMESTAMP '%s 00:00:00' AND date < TIMESTAMP '%s 08:00:00'",
       trimws(where_base),
       format(c_start, "%Y-%m-%d"),
       format(c_end,   "%Y-%m-%d")
@@ -263,21 +259,19 @@ aq_get_deq_pm25 <- function(
     return(NULL)
   }
   
-#----------------------------------------------------------------------------#
-#----------------------------------------------------------------------------#   
-#----------------------------------------------------------------------------#
-# Deduplicate channels + QA/QC checks
-#----------------------------------------------------------------------------#
-  aq_dedup <- aq_raw_hourly |>
+  #----------------------------------------------------------------------------#
+  # Deduplicate channels + QA/QC checks
+  #----------------------------------------------------------------------------#
+  aq_dedup <- aq_raw_hourly %>%
     dplyr::mutate(
       date_mt   = lubridate::with_tz(.data$date, "America/Denver"),
       raw_clean = pmax(.data$rawvalue, 0)
-    ) |>
+    ) %>%
     dplyr::summarise(
       reg2 = first_valid(.data$raw_clean[.data$parameter == "PM25_COL" & .data$instrumenttype == "Regulatory_2"]),
       reg1 = first_valid(.data$raw_clean[.data$parameter == "PM25"     & .data$instrumenttype == "Regulatory"]),
       .by = "date_mt"
-    ) |>
+    ) %>%
     dplyr::mutate(
       raw_clean = dplyr::coalesce(.data$reg2, .data$reg1),
       other_val = dplyr::if_else(!is.na(.data$reg2), .data$reg1, .data$reg2),
@@ -297,9 +291,9 @@ aq_get_deq_pm25 <- function(
     )
   )
   
-  aq_hourly <- hour_spine |>
-    dplyr::left_join(aq_dedup, by = "date_mt") |>
-    dplyr::arrange(.data$date_mt) |>
+  aq_hourly <- hour_spine %>%
+    dplyr::left_join(aq_dedup, by = "date_mt") %>%
+    dplyr::arrange(.data$date_mt) %>%
     dplyr::mutate(
       day_mt      = lubridate::as_date(.data$date_mt),
       hour_mt     = lubridate::hour(.data$date_mt),
@@ -349,36 +343,33 @@ aq_get_deq_pm25 <- function(
           !is.na(.data$reg1),
         FALSE
       )
-    ) |>
+    ) %>%
     dplyr::mutate(
       raw_clean = dplyr::if_else(.data$qa_subbed, .data$reg1, .data$raw_clean),
       pm25      = round(.data$raw_clean),
       parameter = dplyr::if_else(.data$qa_subbed, "PM25", .data$parameter)
-    ) |>
+    ) %>%
     dplyr::select(-dplyr::all_of(c("prev_val", "next_val", "neighbor_ref")))
   
   # Re-attach any extra requested fields (e.g., deq_pm25_fields("full"))
   extra_fields <- setdiff(fields, required_fields)
   if (length(extra_fields) > 0L) {
-    aq_meta <- aq_raw_hourly |>
-      dplyr::mutate(date_mt = lubridate::with_tz(.data$date, "America/Denver")) |>
-      dplyr::arrange(is.na(.data$rawvalue)) |>
+    aq_meta <- aq_raw_hourly %>%
+      dplyr::mutate(date_mt = lubridate::with_tz(.data$date, "America/Denver")) %>%
+      dplyr::arrange(is.na(.data$rawvalue)) %>%
       dplyr::select(dplyr::all_of(c("date_mt", "parameter")), dplyr::any_of(extra_fields))
     
     aq_meta <- aq_meta[!duplicated(aq_meta[c("date_mt", "parameter")]), , drop = FALSE]
     
-    aq_hourly <- aq_hourly |>
+    aq_hourly <- aq_hourly %>%
       dplyr::left_join(aq_meta, by = c("date_mt", "parameter"), na_matches = "never")
   }
   
   if (output == "hourly") return(aq_hourly)
   
-#----------------------------------------------------------------------------#
-#----------------------------------------------------------------------------#   
-#----------------------------------------------------------------------------#  
-#----------------------------------------------------------------------------#
-# 4-hr, 8-hr, and 24-hr daily summaries + QA audit trail
-#----------------------------------------------------------------------------#
+  #----------------------------------------------------------------------------#
+  # 4-hr, 8-hr, and 24-hr daily summaries + QA audit trail
+  #----------------------------------------------------------------------------#
   daily_cols <- c(
     "date_clean", "date_txt", "year_txt",
     "avg_9AM4hr", "avg_9AM8hr", "avg_4PM4hr", "avg_4PM8hr",
@@ -386,11 +377,11 @@ aq_get_deq_pm25 <- function(
     "qa_flag", "qa_flagged_hrs", "qa_subbed_hrs", "qa_details",
     "completeness_flag", "completeness_note",
     "instrument_hrs_REG", "instrument_hrs_REG2",
-    "qa_note_display"
+    "qa_status", "qa_note_display"
   )
   
-  aq_daily_avg <- aq_hourly |>
-    dplyr::group_by(.data$day_mt) |>
+  aq_daily_avg <- aq_hourly %>%
+    dplyr::group_by(.data$day_mt) %>%
     dplyr::summarise(
       day_end_ts   = as.POSIXct(
         sprintf("%s 00:00:00", dplyr::first(.data$day_mt) + lubridate::days(1)),
@@ -445,19 +436,25 @@ aq_get_deq_pm25 <- function(
       instrument_hrs_REG  = sum(.data$parameter == "PM25"     & !is.na(.data$raw_clean), na.rm = TRUE),
       instrument_hrs_REG2 = sum(.data$parameter == "PM25_COL" & !is.na(.data$raw_clean), na.rm = TRUE),
       .groups = "drop"
-    ) |>
+    ) %>%
     dplyr::mutate(
-      date_clean      = .data$day_mt,
-      date_txt        = sub(" 0", " ", format(.data$day_mt, "%b %d")),
-      year_txt        = format(.data$day_mt, "%Y"),
+      date_clean = .data$day_mt,
+      date_txt   = sub(" 0", " ", format(.data$day_mt, "%b %d")),
+      year_txt   = format(.data$day_mt, "%Y"),
+      qa_status  = dplyr::case_when(
+        dplyr::coalesce(.data$qa_flag, FALSE) & dplyr::coalesce(.data$qa_subbed_hrs, 0L) > 0L ~ "Substituted",
+        dplyr::coalesce(.data$qa_flag, FALSE)                                                 ~ "Flagged",
+        dplyr::coalesce(.data$completeness_flag, FALSE)                                       ~ "Partial",
+        TRUE                                                                                  ~ "OK"
+      ),
       qa_note_display = dplyr::case_when(
         !is.na(.data$qa_details) & !is.na(.data$completeness_note) ~ paste0("QA/QC: ", .data$qa_details, " | Incomplete: ", .data$completeness_note),
         !is.na(.data$qa_details)                                   ~ paste0("QA/QC: ", .data$qa_details),
         !is.na(.data$completeness_note)                            ~ paste0("Incomplete: ", .data$completeness_note),
         TRUE                                                       ~ NA_character_
       )
-    ) |>
-    dplyr::select(dplyr::all_of(daily_cols)) |>
+    ) %>%
+    dplyr::select(dplyr::all_of(daily_cols)) %>%
     dplyr::arrange(dplyr::desc(.data$date_clean))
   
   if (output == "daily") return(aq_daily_avg)

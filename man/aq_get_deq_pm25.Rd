@@ -51,6 +51,6 @@ records are returned.
 \description{
 Reads in MT DEQ's hourly air quality API hosted via ArcGIS Online
 and calculates daily summaries pertinent to regulatory season (4-hr, 8-hr,
-and 24-hr averages plus QA/QC and completeness flags).
+and 24-hr averages plus QA/QC status, notes, and completeness flags).
 NOTE: The API service only maintains hourly records from a rolling 13-month window.
 }

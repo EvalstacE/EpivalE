@@ -1,9 +1,10 @@
 Package: EpivalE
 Title: Wrangling County Public Health Data
-Version: 0.0.0.9000
+Version: 0.1.0
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+    person("Valerie", "Stacey", email = "your-email@example.com", role = c("aut", "cre"))
+Description: Utility functions for fetching, validating, and summarizing local
+    public health datasets.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -12,7 +13,8 @@ Imports:
     lubridate,
     tibble,
     rlang,
-    magrittr
+    magrittr,
+    httr2
 Suggests:
     MMWRweek,
     arcgislayers,
