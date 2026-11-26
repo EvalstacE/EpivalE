@@ -1,6 +1,6 @@
 Package: EpivalE
 Title: Wrangling County Public Health Data
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: 
     person("Valerie", "Stacey", email = "your-email@example.com", role = c("aut", "cre"))
 Description: Utility functions for fetching, validating, and summarizing local
@@ -15,9 +15,13 @@ Imports:
     rlang,
     magrittr,
     httr2,
-    jsonlite
+    jsonlite,
+    grDevices,
+    stats,
+    utils
 Suggests:
     MMWRweek,
     arcgislayers,
-    sf
+    sf,
+    plotly
 Config/roxygen2/version: 8.0.0
