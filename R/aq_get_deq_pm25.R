@@ -6,11 +6,11 @@ trunc_1dp <- function(x) {
 
 #' Classify PM2.5 Concentrations Using 2024 EPA AQI Breakpoints
 #'
-#' @description Truncates PM2.5 concentrations (µg/m³) to one decimal place per
+#' @description Truncates PM2.5 concentrations (ug/m3) to one decimal place per
 #'   EPA rules and assigns the revised 2024 AQI health category.
 #'
-#' @param pm25 Numeric vector of PM2.5 concentrations (µg/m³).
-#' @param short_usg Logical. If `TRUE` (default), labels 35.5–55.4 µg/m³ as
+#' @param pm25 Numeric vector of PM2.5 concentrations (ug/m3).
+#' @param short_usg Logical. If `TRUE` (default), labels 35.5-55.4 ug/m3 as
 #'   `"USG"` for compact UI displays; if `FALSE`, uses
 #'   `"Unhealthy for Sensitive Groups"`.
 #' @param clamp_negative Logical. If `TRUE` (default), treats small negative
@@ -46,7 +46,6 @@ aq_pm25_category <- function(pm25, short_usg = TRUE, clamp_negative = TRUE) {
 }
 
 
-
 #' Standard Montana DEQ PM2.5 field sets
 #'
 #' @param set Either `"minimal"` (fastest for daily summaries) or `"full"`
@@ -74,7 +73,9 @@ deq_pm25_fields <- function(set = c("minimal", "full")) {
 #' @return A single SQL `WHERE` string (without date filtering).
 #' @export
 deq_pm25_where <- function(logger_id = "RP") {
-  stopifnot(is.character(logger_id), length(logger_id) == 1L, nzchar(logger_id))
+  if (!is.character(logger_id) || length(logger_id) != 1L || !nzchar(trimws(logger_id))) {
+    rlang::abort("`logger_id` must be a single non-empty character string.")
+  }
   
   sprintf(
     paste(
@@ -82,7 +83,7 @@ deq_pm25_where <- function(logger_id = "RP") {
       "AND ((parameter = 'PM25' AND instrumenttype = 'Regulatory')",
       "OR (parameter = 'PM25_COL' AND instrumenttype = 'Regulatory_2'))"
     ),
-    logger_id
+    trimws(logger_id)
   )
 }
 
@@ -132,34 +133,37 @@ aq_get_deq_pm25 <- function(
     reason = "to query Montana DEQ FeatureServer layers."
   )
   
+  # Fail-fast input checks
+  if (!inherits(publish_lag, c("Period", "Duration", "difftime"))) {
+    rlang::abort("`publish_lag` must be a lubridate Period/Duration or difftime (e.g., `lubridate::minutes(20)`).")
+  }
+  
   output  <- match.arg(output)
   now_mt  <- lubridate::with_tz(Sys.time(), "America/Denver")
   start_d <- lubridate::as_date(start_date)
   end_d   <- lubridate::as_date(end_date)
   
-  # Fail-fast input checks
   if (is.na(start_d) || is.na(end_d) || start_d > end_d) {
-    stop("`start_date` and `end_date` must be valid dates with start_date <= end_date.", call. = FALSE)
+    rlang::abort("`start_date` and `end_date` must be valid dates with `start_date <= end_date`.")
   }
   
   chunk_days <- as.integer(chunk_days)
   if (is.na(chunk_days) || chunk_days < 1L) {
-    stop("`chunk_days` must be a positive integer.", call. = FALSE)
+    rlang::abort("`chunk_days` must be a positive integer.")
   }
   
   required_fields <- c("parameter", "instrumenttype", "date", "rawvalue")
   fields          <- unique(as.character(fields))
   missing_fields  <- setdiff(required_fields, fields)
   if (length(missing_fields) > 0L) {
-    stop(
+    rlang::abort(paste0(
       "`fields` is missing required columns: ",
-      paste(missing_fields, collapse = ", "),
-      call. = FALSE
-    )
+      paste(missing_fields, collapse = ", ")
+    ))
   }
   
   if (!is.character(where_base) || length(where_base) != 1L || !nzchar(trimws(where_base))) {
-    stop("`where_base` must be a single, non-empty SQL WHERE clause string.", call. = FALSE)
+    rlang::abort("`where_base` must be a single, non-empty SQL WHERE clause string.")
   }
   
   #----------------------------------------------------------------------------#
@@ -168,6 +172,17 @@ aq_get_deq_pm25 <- function(
   first_valid <- function(x) {
     v <- x[!is.na(x)]
     if (length(v) == 0L) NA_real_ else v[1]
+  }
+  
+  build_qa_reason <- function(colloc, spike, extreme) {
+    vapply(seq_along(colloc), function(i) {
+      parts <- c(
+        if (isTRUE(colloc[i]))  "Collocated mismatch",
+        if (isTRUE(spike[i]))   "Isolated 1-hr spike",
+        if (isTRUE(extreme[i])) "Extreme value (>= 500)"
+      )
+      if (length(parts) == 0L) NA_character_ else paste(parts, collapse = " & ")
+    }, character(1))
   }
   
   calc_reg_avg <- function(ts, vals, day_date, cutoff_hour, window_hrs) {
@@ -236,8 +251,10 @@ aq_get_deq_pm25 <- function(
   
   if (is.null(deq_lyr)) {
     deq_lyr <- arcgislayers::arc_open(default_url, token = NULL)
-  } else if (is.character(deq_lyr) && length(deq_lyr) == 1L) {
-    deq_lyr <- arcgislayers::arc_open(deq_lyr, token = NULL)
+  } else if (is.character(deq_lyr) && length(deq_lyr) == 1L && nzchar(trimws(deq_lyr))) {
+    deq_lyr <- arcgislayers::arc_open(trimws(deq_lyr), token = NULL)
+  } else if (!inherits(deq_lyr, c("FeatureLayer", "Table"))) {
+    rlang::abort("`deq_lyr` must be `NULL`, a single non-empty URL string, or an `arcgislayers` FeatureLayer/Table.")
   }
   
   #----------------------------------------------------------------------------#
@@ -328,8 +345,7 @@ aq_get_deq_pm25 <- function(
         !is.na(.data$reg2) ~ "PM25_COL",
         !is.na(.data$reg1) ~ "PM25",
         TRUE               ~ NA_character_
-      ),
-      pm25 = round(.data$raw_clean)
+      )
     )
   
   hour_spine <- tibble::tibble(
@@ -340,14 +356,22 @@ aq_get_deq_pm25 <- function(
     )
   )
   
+  hourly_cols <- c(
+    "date_clean", "date_txt", "year_txt", "hr_txt",
+    "date_mt", "date_end_mt", "hour_mt",
+    "raw_clean", "pm25", "pm25_cat_1hr",
+    "parameter", "reg1", "reg2",
+    "qa_flag", "qa_reason", "qa_subbed",
+    "qa_flag_collocated", "qa_flag_spike", "qa_flag_extreme"
+  )
+  
   aq_hourly <- hour_spine %>%
     dplyr::left_join(aq_dedup, by = "date_mt") %>%
     dplyr::arrange(.data$date_mt) %>%
     dplyr::mutate(
-      day_mt      = lubridate::as_date(.data$date_mt),
+      date_clean  = lubridate::as_date(.data$date_mt),
       hour_mt     = lubridate::hour(.data$date_mt),
       date_end_mt = .data$date_mt + lubridate::dhours(1),
-      date_clean  = lubridate::as_date(.data$date_end_mt),
       date_txt    = sub(" 0", " ", format(.data$date_clean, "%b %d")),
       year_txt    = format(.data$date_clean, "%Y"),
       hr_txt      = sub("^0", "", format(.data$date_end_mt, "%I %p")),
@@ -361,45 +385,43 @@ aq_get_deq_pm25 <- function(
         TRUE                                            ~ NA_real_
       ),
       
-      flag_collocated = dplyr::coalesce(
+      qa_flag_collocated = dplyr::coalesce(
         !is.na(.data$raw_clean) & !is.na(.data$other_val) &
           (.data$raw_clean - .data$other_val) >= 35 &
           .data$raw_clean >= 3 * pmax(.data$other_val, 5),
         FALSE
       ),
-      flag_spike = dplyr::coalesce(
+      qa_flag_spike = dplyr::coalesce(
         !is.na(.data$raw_clean) & !is.na(.data$neighbor_ref) &
           .data$raw_clean >= 50 &
           (.data$raw_clean - .data$neighbor_ref) >= 50 &
           .data$raw_clean >= 3 * pmax(.data$neighbor_ref, 5),
         FALSE
       ),
-      flag_extreme = dplyr::coalesce(.data$raw_clean >= 500, FALSE),
+      qa_flag_extreme = dplyr::coalesce(.data$raw_clean >= 500, FALSE),
       
-      qa_flag   = .data$flag_collocated | .data$flag_spike | .data$flag_extreme,
-      qa_reason = dplyr::case_when(
-        .data$flag_collocated & .data$flag_spike ~ "Collocated mismatch & isolated spike",
-        .data$flag_collocated                    ~ "Collocated mismatch",
-        .data$flag_spike                         ~ "Isolated 1-hr spike",
-        .data$flag_extreme                       ~ "Extreme value (>= 500)",
-        TRUE                                     ~ NA_character_
+      qa_flag   = .data$qa_flag_collocated | .data$qa_flag_spike | .data$qa_flag_extreme,
+      qa_reason = build_qa_reason(
+        .data$qa_flag_collocated,
+        .data$qa_flag_spike,
+        .data$qa_flag_extreme
       ),
       
       qa_subbed = dplyr::coalesce(
         .data$parameter == "PM25_COL" &
-          .data$flag_collocated &
-          .data$flag_spike &
+          .data$qa_flag_collocated &
+          .data$qa_flag_spike &
           !is.na(.data$reg1),
         FALSE
       )
     ) %>%
     dplyr::mutate(
-      raw_clean = dplyr::if_else(.data$qa_subbed, .data$reg1, .data$raw_clean),
-      pm25      = round(.data$raw_clean),
-      parameter = dplyr::if_else(.data$qa_subbed, "PM25", .data$parameter),
-      pm25_cat  = aq_pm25_category(.data$raw_clean)
+      raw_clean    = dplyr::if_else(.data$qa_subbed, .data$reg1, .data$raw_clean),
+      pm25         = round(.data$raw_clean),
+      parameter    = dplyr::if_else(.data$qa_subbed, "PM25", .data$parameter),
+      pm25_cat_1hr = aq_pm25_category(.data$raw_clean)
     ) %>%
-    dplyr::select(-dplyr::all_of(c("prev_val", "next_val", "neighbor_ref")))
+    dplyr::select(dplyr::all_of(hourly_cols))
   
   # Re-attach any extra requested fields (e.g., deq_pm25_fields("full"))
   extra_fields <- setdiff(fields, required_fields)
@@ -427,30 +449,30 @@ aq_get_deq_pm25 <- function(
     "n_valid",
     "qa_flag", "qa_flagged_hrs", "qa_subbed_hrs", "qa_details",
     "completeness_flag", "completeness_note",
-    "instrument_hrs_REG", "instrument_hrs_REG2",
+    "instrument_hrs_reg1", "instrument_hrs_reg2",
     "qa_status", "qa_note_display"
   )
   
   aq_daily_avg <- aq_hourly %>%
-    dplyr::group_by(.data$day_mt) %>%
+    dplyr::group_by(.data$date_clean) %>%
     dplyr::summarise(
       day_end_ts   = as.POSIXct(
-        sprintf("%s 00:00:00", dplyr::first(.data$day_mt) + lubridate::days(1)),
+        sprintf("%s 00:00:00", dplyr::first(.data$date_clean) + lubridate::days(1)),
         tz = "America/Denver"
       ),
       day_complete = now_mt >= (.data$day_end_ts + publish_lag),
       n_expected   = dplyr::n(),
       n_valid      = sum(!is.na(.data$raw_clean)),
       
-      avg_9AM4hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt),  9L, 4L),
-      avg_9AM8hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt),  9L, 8L),
-      avg_4PM4hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 4L),
-      avg_4PM8hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 8L),
+      avg_9AM4hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean),  9L, 4L),
+      avg_9AM8hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean),  9L, 8L),
+      avg_4PM4hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean), 16L, 4L),
+      avg_4PM8hr = calc_reg_avg(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean), 16L, 8L),
       
-      n_9am_4 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt),  9L, 4L),
-      n_9am_8 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt),  9L, 8L),
-      n_4pm_4 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 4L),
-      n_4pm_8 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$day_mt), 16L, 8L),
+      n_9am_4 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean),  9L, 4L),
+      n_9am_8 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean),  9L, 8L),
+      n_4pm_4 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean), 16L, 4L),
+      n_4pm_8 = count_reg_hrs(.data$date_mt, .data$raw_clean, dplyr::first(.data$date_clean), 16L, 8L),
       
       avg_24hr = if (.data$day_complete && .data$n_valid >= 18L) trunc_1dp(mean(.data$raw_clean, na.rm = TRUE)) else NA_real_,
       max_24hr = if (.data$day_complete && .data$n_valid >= 18L) trunc_1dp(max(.data$raw_clean, na.rm = TRUE))  else NA_real_,
@@ -484,21 +506,20 @@ aq_get_deq_pm25 <- function(
       ),
       completeness_flag = !is.na(.data$completeness_note),
       
-      instrument_hrs_REG  = sum(.data$parameter == "PM25"     & !is.na(.data$raw_clean), na.rm = TRUE),
-      instrument_hrs_REG2 = sum(.data$parameter == "PM25_COL" & !is.na(.data$raw_clean), na.rm = TRUE),
+      instrument_hrs_reg1 = sum(.data$parameter == "PM25"     & !is.na(.data$raw_clean), na.rm = TRUE),
+      instrument_hrs_reg2 = sum(.data$parameter == "PM25_COL" & !is.na(.data$raw_clean), na.rm = TRUE),
       .groups = "drop"
     ) %>%
     dplyr::mutate(
-      date_clean         = .data$day_mt,
-      date_txt           = sub(" 0", " ", format(.data$day_mt, "%b %d")),
-      year_txt           = format(.data$day_mt, "%Y"),
+      date_txt           = sub(" 0", " ", format(.data$date_clean, "%b %d")),
+      year_txt           = format(.data$date_clean, "%Y"),
       pm25_cat_24hr      = aq_pm25_category(.data$avg_24hr),
       exceeds_naaqs_24hr = dplyr::if_else(
         is.na(.data$avg_24hr),
         NA,
         .data$avg_24hr >= 35.5
       ),
-      qa_status  = dplyr::case_when(
+      qa_status = dplyr::case_when(
         dplyr::coalesce(.data$qa_flag, FALSE) & dplyr::coalesce(.data$qa_subbed_hrs, 0L) > 0L ~ "Substituted",
         dplyr::coalesce(.data$qa_flag, FALSE)                                                 ~ "Flagged",
         dplyr::coalesce(.data$completeness_flag, FALSE)                                       ~ "Partial",
@@ -517,4 +538,136 @@ aq_get_deq_pm25 <- function(
   if (output == "daily") return(aq_daily_avg)
   
   list(hourly = aq_hourly, daily = aq_daily_avg)
+}
+
+
+#' Standard CSV Export Column Maps for Helena Air Quality Datasets
+#'
+#' Returns a named character vector (`"Export Name" = "source_col"`) with
+#' harmonized column names across daily and hourly PM2.5 exports.
+#'
+#' @param type Dataset type: `"daily"` or `"hourly"`.
+#' @return A named character vector suitable for [aq_format_export()].
+#' @export
+aq_export_col_map <- function(type = c("daily", "hourly")) {
+  type <- match.arg(type)
+  
+  switch(
+    type,
+    hourly = c(
+      "Year"                     = "year_txt",
+      "Date"                     = "date_clean",
+      "Hour_End"                 = "hr_txt",
+      "PM25_1hr_raw"             = "raw_clean",
+      "PM25_1hr_final"           = "pm25",
+      "PM25_1hr_health_cat"      = "pm25_cat_1hr",
+      "Measurement_Channel"      = "parameter",
+      "Thermo_BAM_5014i_reading" = "reg1",
+      "MetOne_BAM_1020_reading"  = "reg2",
+      "QA_Any_Flag"              = "qa_flag",
+      "QA_Reason"                = "qa_reason",
+      "QA_Value_Subbed"          = "qa_subbed",
+      "QA_BAMs_Mismatch"         = "qa_flag_collocated",
+      "QA_Iso_Spike"             = "qa_flag_spike",
+      "QA_Extreme"               = "qa_flag_extreme"
+    ),
+    daily = c(
+      "Year"                      = "year_txt",
+      "Date"                      = "date_clean",
+      "PM25_24hr_avg"             = "avg_24hr",
+      "PM25_24hr_max"             = "max_24hr",
+      "PM25_24hr_health_cat"      = "pm25_cat_24hr",
+      "PM25_24hr_exceeds_NAAQS"   = "exceeds_naaqs_24hr",
+      "PM25_9AM_4hr_avg"          = "avg_9AM4hr",
+      "PM25_9AM_8hr_avg"          = "avg_9AM8hr",
+      "PM25_4PM_4hr_avg"          = "avg_4PM4hr",
+      "PM25_4PM_8hr_avg"          = "avg_4PM8hr",
+      "Valid_Hours"               = "n_valid",
+      "Thermo_BAM_5014i_hours"    = "instrument_hrs_reg1",
+      "MetOne_BAM_1020_hours"     = "instrument_hrs_reg2",
+      "QA_Any_Flag"               = "qa_flag",
+      "QA_Status"                 = "qa_status",
+      "QA_Flagged_Hours"          = "qa_flagged_hrs",
+      "QA_Subbed_Hours"           = "qa_subbed_hrs",
+      "QA_Reason"                 = "qa_details",
+      "QA_Completeness_Flag"      = "completeness_flag",
+      "QA_Completeness_Note"      = "completeness_note",
+      "Weather_Temp_Max_F"        = "wx_temp_max",
+      "Weather_Temp_Min_F"        = "wx_temp_min",
+      "Weather_Humidity_Mean_Pct" = "wx_rh_mean",
+      "Weather_Wind_Avg_mph"      = "wx_wind_avg",
+      "Weather_Wind_Max_mph"      = "wx_wind_max",
+      "Weather_Snowfall_in"       = "wx_snowfall",
+      "Weather_Snow_Depth_in"     = "wx_snow_depth",
+      "Weather_Snow_Cover"        = "wx_snow_cover",
+      "Weather_Precip_in"         = "wx_precip"
+    )
+  )
+}
+
+
+#' Reformat an Air Quality Data Frame for CSV Export
+#'
+#' Optionally sorts, selects, orders, and renames columns for end-user CSV
+#' downloads. Safely skips columns in `col_map` that are absent from `df`
+#' (such as hidden UI columns or unjoined weather fields).
+#'
+#' @param df A daily or hourly air quality data frame from [aq_get_deq_pm25()].
+#' @param type Dataset type (`"daily"` or `"hourly"`), used for default
+#'   `col_map` and `sort_col` when either is `NULL`.
+#' @param col_map Optional named character vector (`"Export Name" = "source_col"`)
+#'   overriding [aq_export_col_map()].
+#' @param keep_unmapped Logical; append columns not listed in `col_map`?
+#' @param sort_col Optional source column name to sort by before renaming.
+#'   Defaults to `"date_clean"` for `"daily"` and `"date_end_mt"` for `"hourly"`.
+#'   Pass `NA` to preserve the incoming row order.
+#' @param sort_desc Logical; sort descending when sorting is active?
+#'
+#' @return A formatted tibble ready for CSV export.
+#' @importFrom rlang .data
+#' @export
+aq_format_export <- function(
+    df,
+    type          = c("daily", "hourly"),
+    col_map       = NULL,
+    keep_unmapped = FALSE,
+    sort_col      = NULL,
+    sort_desc     = TRUE
+) {
+  type <- match.arg(type)
+  
+  if (!is.data.frame(df)) {
+    rlang::abort("`df` must be a data frame.")
+  }
+  
+  if (is.null(col_map)) {
+    col_map <- aq_export_col_map(type)
+  }
+  
+  if (!is.character(col_map) || length(col_map) == 0L ||
+      is.null(names(col_map)) || any(!nzchar(names(col_map)))) {
+    rlang::abort("`col_map` must be a non-empty, fully named character vector.")
+  }
+  
+  if (is.null(sort_col)) {
+    sort_col <- if (type == "daily") "date_clean" else "date_end_mt"
+  }
+  
+  if (length(sort_col) != 1L || (!is.na(sort_col) && !is.character(sort_col))) {
+    rlang::abort("`sort_col` must be a single column name string, `NULL`, or `NA`.")
+  }
+  
+  if (!is.na(sort_col) && sort_col %in% names(df)) {
+    df <- if (isTRUE(sort_desc)) {
+      dplyr::arrange(df, dplyr::desc(.data[[sort_col]]))
+    } else {
+      dplyr::arrange(df, .data[[sort_col]])
+    }
+  }
+  
+  if (isTRUE(keep_unmapped)) {
+    dplyr::select(df, dplyr::any_of(col_map), dplyr::everything())
+  } else {
+    dplyr::select(df, dplyr::any_of(col_map))
+  }
 }

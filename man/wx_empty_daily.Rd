@@ -10,7 +10,7 @@ wx_empty_daily(dates = as.Date(character()))
 \item{dates}{Optional vector of \code{Date} values.}
 }
 \value{
-A tibble with the exact column schema of \code{wx_get_daily()}, filled with \code{NA_real_}.
+A tibble with the exact column schema of \code{\link[=wx_get_daily]{wx_get_daily()}}, filled with \code{NA}.
 }
 \description{
 Empty daily weather template for schema-safe fallback joins

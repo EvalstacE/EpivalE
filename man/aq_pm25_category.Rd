@@ -7,9 +7,9 @@
 aq_pm25_category(pm25, short_usg = TRUE, clamp_negative = TRUE)
 }
 \arguments{
-\item{pm25}{Numeric vector of PM2.5 concentrations (µg/m³).}
+\item{pm25}{Numeric vector of PM2.5 concentrations (ug/m3).}
 
-\item{short_usg}{Logical. If \code{TRUE} (default), labels 35.5–55.4 µg/m³ as
+\item{short_usg}{Logical. If \code{TRUE} (default), labels 35.5-55.4 ug/m3 as
 \code{"USG"} for compact UI displays; if \code{FALSE}, uses
 \code{"Unhealthy for Sensitive Groups"}.}
 
@@ -20,6 +20,6 @@ monitor noise (\verb{< 0}) as \code{0} (\code{"Good"}); if \code{FALSE}, returns
 An ordered factor of EPA PM2.5 health categories.
 }
 \description{
-Truncates PM2.5 concentrations (µg/m³) to one decimal place per
+Truncates PM2.5 concentrations (ug/m3) to one decimal place per
 EPA rules and assigns the revised 2024 AQI health category.
 }
