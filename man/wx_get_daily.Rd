@@ -9,7 +9,6 @@ wx_get_daily(
   end_date = lubridate::today(tzone = "America/Denver"),
   location = c(46.58, -112.04),
   units = c("imperial", "metric"),
-  snow_cover_min = NULL,
   timezone = "America/Denver",
   timeout_sec = 60
 )
@@ -25,10 +24,6 @@ Helena, MT (\code{c(46.58, -112.04)}).}
 \item{units}{Unit system: \code{"imperial"} (\code{fahrenheit}, \code{mph}, \code{inch}; default)
 or \code{"metric"} (\code{celsius}, \code{kmh}, \code{mm} / \code{cm}).}
 
-\item{snow_cover_min}{Optional numeric minimum daily max snow depth required
-to classify \code{wx_snow_cover} as \code{TRUE} (in inches for \code{"imperial"} or cm for
-\code{"metric"}). Defaults to \code{0.5} in (NWS measurable snow depth) or \code{1.0} cm.}
-
 \item{timezone}{IANA timezone string. Defaults to \code{"America/Denver"}.}
 
 \item{timeout_sec}{HTTP request timeout in seconds (default \code{60}).}
@@ -39,8 +34,5 @@ A tibble with \code{date_clean} and \verb{wx_*} daily weather columns, or
 }
 \description{
 Queries Open-Meteo's Historical Weather API directly via \code{httr2}
-and returns a join-ready daily tibble keyed by \code{date_clean}, including
-daily maximum snow depth on the ground and a derived snow-cover flag.
-Note: Open-Meteo's historical archive typically lags real time by 2-5 days;
-recent unfinalized dates return \code{NA}.
+and returns a join-ready daily tibble keyed by \code{date_clean}.
 }

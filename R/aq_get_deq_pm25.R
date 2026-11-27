@@ -598,8 +598,6 @@ aq_export_col_map <- function(type = c("daily", "hourly")) {
       "Weather_Wind_Avg_mph"      = "wx_wind_avg",
       "Weather_Wind_Max_mph"      = "wx_wind_max",
       "Weather_Snowfall_in"       = "wx_snowfall",
-      "Weather_Snow_Depth_in"     = "wx_snow_depth",
-      "Weather_Snow_Cover"        = "wx_snow_cover",
       "Weather_Precip_in"         = "wx_precip"
     )
   )

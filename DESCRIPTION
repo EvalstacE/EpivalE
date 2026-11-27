@@ -15,6 +15,7 @@ Imports:
     rlang,
     magrittr,
     httr2,
+    jsonlite,
     grDevices,
     stats,
     utils
